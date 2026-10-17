@@ -1,31 +1,15 @@
--- LocalScript (executor) — direct clipboard dump
--- Scans only game scripts, skips the noise, copies to clipboard.
--- No files, no GUI reading, just straight to the clipboard.
+-- LocalScript (executor) — TBSOBR bytecode decompiler
+-- Tries Script.Source first, falls back to getscriptbytecode + web API.
+-- Pastes decompiled source into a text box.
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
+local HttpService = game:GetService("HttpService")
 
-local gui = Instance.new("ScreenGui")
-gui.Name = "OllieClip"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.DisplayOrder = 2147483647
-gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-local status = Instance.new("TextLabel")
-status.Size = UDim2.new(0.9, 0, 0.1, 0)
-status.Position = UDim2.new(0.05, 0, 0.05, 0)
-status.BackgroundColor3 = Color3.fromRGB(18, 16, 26)
-status.BorderSizePixel = 0
-status.Text = "scanning game scripts..."
-status.TextColor3 = Color3.fromRGB(140, 100, 255)
-status.Font = Enum.Font.GothamBold
-status.TextSize = 14
-status.TextWrapped = true
-status.Parent = gui
-Instance.new("UICorner", status).CornerRadius = UDim.new(0, 8)
-
-task.wait(0.5)
+-- CONFIG
+local API_URL = "https://medal.bot/api/decompile" -- MedalDecomp public API
+local TARGET_ROOT = game:GetService("ReplicatedStorage")
+local FILTER = "DefenseUtil" -- change to "BossAttacks" for all boss scripts
 
 local function getPath(obj)
     local parts = {}
@@ -37,68 +21,108 @@ local function getPath(obj)
     return "game." .. table.concat(parts, ".")
 end
 
--- Only game servers and storage. No Workspace (lags), no PlayerScripts (noise).
-local SCAN_ROOTS = {
-    game:GetService("ReplicatedStorage"),
-    game:GetService("ServerScriptService"),
-    game:GetService("ServerStorage"),
-}
+-- try .Source, fall back to getscriptbytecode
+local function getDecompiledSource(scr)
+    -- 1. try direct source
+    local ok, src = pcall(function() return scr.Source end)
+    if ok and src and #src > 0 then
+        return src, "Source"
+    end
 
-local out = {}
-table.insert(out, "-- TBSOBR GAME SCRIPTS --\n")
+    -- 2. try executor decompile
+    if decompile then
+        local ok2, dec = pcall(decompile, scr)
+        if ok2 and dec then return dec, "decompile()" end
+    end
 
-local count = 0
-for _, root in ipairs(SCAN_ROOTS) do
-    if root then
-        for _, d in ipairs(root:GetDescendants()) do
-            if d:IsA("LuaSourceContainer") then
-                local path = getPath(d)
-                
-                -- Skip core junk
-                if not path:find("HDAdmin") and not path:find("PlayerModule") then
-                    count = count + 1
-                    if count % 20 == 0 then
-                        status.Text = "found " .. count .. " scripts..."
-                        task.wait()
-                    end
-
-                    table.insert(out, "\n[" .. d.ClassName .. "] " .. path)
-                    
-                    local okSrc, src = pcall(function() return d.Source end)
-                    if okSrc and src and #src > 0 then
-                        table.insert(out, "--- SOURCE START ---")
-                        table.insert(out, src)
-                        table.insert(out, "--- SOURCE END ---")
-                    else
-                        table.insert(out, "-- (no source readable)")
-                    end
-                end
+    -- 3. try getscriptbytecode + web API
+    if getscriptbytecode and request then
+        local ok3, bytecode = pcall(getscriptbytecode, scr)
+        if ok3 and bytecode and #bytecode > 0 then
+            local ok4, resp = pcall(function()
+                return request({
+                    Url = API_URL,
+                    Method = "POST",
+                    Headers = { ["Content-Type"] = "text/plain" },
+                    Body = bytecode,
+                })
+            end)
+            if ok4 and resp and resp.StatusCode == 200 and resp.Body then
+                return resp.Body, "web decompile"
             end
+        end
+    end
+
+    return nil, "protected"
+end
+
+-- scan and collect
+local results = {}
+local count = 0
+
+for _, d in ipairs(TARGET_ROOT:GetDescendants()) do
+    if d:IsA("LuaSourceContainer") and d.Name:find(FILTER) then
+        count = count + 1
+        local src, method = getDecompiledSource(d)
+        if src then
+            table.insert(results, string.format("-- [%s] %s\n-- method: %s\n\n%s\n\n", d.ClassName, getPath(d), method, src))
+        else
+            table.insert(results, string.format("-- [%s] %s\n-- FAILED: %s\n\n", d.ClassName, getPath(d), method))
         end
     end
 end
 
-status.Text = "copying to clipboard..."
-task.wait(0.5)
+-- GUI
+local gui = Instance.new("ScreenGui")
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 2147483647
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
-local finalStr = table.concat(out, "\n")
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0.95, 0, 0.85, 0)
+frame.Position = UDim2.new(0.025, 0, 0.075, 0)
+frame.BackgroundColor3 = Color3.fromRGB(18, 16, 26)
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 
--- safety check: if too big, cut it to prevent executor crash
-if #finalStr > 150000 then
-    status.Text = "WARNING: Too big ("..math.floor(#finalStr/1024).."KB). Copying first 150KB only."
-    finalStr = finalStr:sub(1, 150000) .. "\n\n-- [TRUNCATED TO PREVENT CRASH] --"
-    task.wait(2)
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 36)
+title.BackgroundTransparency = 1
+title.Text = "decompiled: " .. count .. " scripts (filter: " .. FILTER .. ")"
+title.TextColor3 = Color3.fromRGB(140, 100, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 14
+title.Parent = frame
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1, -20, 1, -50)
+scroll.Position = UDim2.new(0, 10, 0, 42)
+scroll.BackgroundColor3 = Color3.fromRGB(12, 10, 18)
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 8
+scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+scroll.Parent = frame
+Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 6)
+
+local textBox = Instance.new("TextBox")
+textBox.Size = UDim2.new(1, 0, 0, 0)
+textBox.BackgroundTransparency = 1
+textBox.Text = table.concat(results, "\n")
+textBox.TextColor3 = Color3.fromRGB(235, 230, 255)
+textBox.Font = Enum.Font.Code
+textBox.TextSize = 11
+textBox.TextXAlignment = Enum.TextXAlignment.Left
+textBox.TextYAlignment = Enum.TextYAlignment.Top
+textBox.ClearTextOnFocus = false
+textBox.MultiLine = true
+textBox.TextEditable = false
+textBox.Parent = scroll
+
+local function update()
+    local h = textBox.TextBounds.Y
+    textBox.Size = UDim2.new(1, 0, 0, math.max(h, scroll.AbsoluteSize.Y))
+    scroll.CanvasSize = UDim2.new(0, 0, 0, math.max(h, scroll.AbsoluteSize.Y))
 end
-
-if setclipboard then
-    local ok, err = pcall(function()
-        setclipboard(finalStr)
-    end)
-    if ok then
-        status.Text = "DONE! Copied " .. count .. " scripts.\nPaste here."
-    else
-        status.Text = "clipboard failed: " .. tostring(err)
-    end
-else
-    status.Text = "executor has no setclipboard!"
-end
+textBox:GetPropertyChangedSignal("TextBounds"):Connect(update)
+scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(update)
+task.spawn(update)
