@@ -1,52 +1,54 @@
--- GGE LOGIC HUNTER v1.0
--- Ищет только боевые скрипты, чтобы не лагало
+-- GGE REMOTE FUZZER v1.0
+-- Пытается «угадать» правильный аргумент для убийства босса
 
-local Keywords = {"Damage", "Attack", "FireServer", "RemoteEvent", "Hit", "Combat"}
-local FoundScripts = {}
+local Player = game.Players.LocalPlayer
+local AttackFolder = game.Lighting:FindFirstChild("AttackTools")
 
-local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
-local Frame = Instance.new("ScrollingFrame", ScreenGui)
-Frame.Size = UDim2.new(0, 300, 0, 400)
-Frame.Position = UDim2.new(0, 10, 0, 50)
-Frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-Frame.CanvasSize = UDim2.new(0, 0, 10, 0)
-
-local UIList = Instance.new("UIListLayout", Frame)
-
-local function AddToLog(text)
-    local label = Instance.new("TextLabel", Frame)
-    label.Size = UDim2.new(1, 0, 0, 25)
-    label.Text = text
-    label.TextColor3 = Color3.fromRGB(255, 255, 255)
-    label.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    label.TextSize = 12
-    label.TextXAlignment = Enum.TextXAlignment.Left
+local function GetTarget()
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") and obj ~= Player.Character then
+            return obj
+        end
+    end
+    return nil
 end
 
-local function ScanZone(zone)
-    for _, obj in pairs(zone:GetDescendants()) do
-        if obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
-            -- Мы не можем читать .Source напрямую, но мы можем проверить имя 
-            -- и попробовать найти упоминания в именах или путях
-            local name = obj.Name:lower()
-            for _, word in pairs(Keywords) do
-                if name:find(word:lower()) then
-                    table.insert(FoundScripts, obj)
-                    AddToLog("FOUND: " .. obj:GetFullName())
-                    break
-                end
-            end
+local function Fuzz()
+    local target = GetTarget()
+    if not target then print("No target found!") return end
+    
+    local damage = 999999
+    
+    for _, remote in pairs(AttackFolder:GetDescendants()) do
+        if remote:IsA("RemoteEvent") then
+            pcall(function()
+                -- Вариант 1: (Цель, Урон)
+                remote:FireServer(target, damage)
+                -- Вариант 2: (Урон, Цель)
+                remote:FireServer(damage, target)
+                -- Вариант 3: ("Damage", Цель, Урон)
+                remote:FireServer("Damage", target, damage)
+                -- Вариант 4: ("Attack", Цель, Урон)
+                remote:FireServer("Attack", target, damage)
+                -- Вариант 5: (Цель, {Damage = Урон})
+                remote:FireServer(target, {Damage = damage, Power = damage})
+                -- Вариант 6: (Цель, "Kill")
+                remote:FireServer(target, "Kill")
+            end)
         end
     end
 end
 
--- Сканируем только важные зоны
-print("Hunting for combat logic...")
-ScanZone(game.ReplicatedStorage)
-ScanZone(game.StarterPlayer.StarterPlayerScripts)
-ScanZone(game.StarterPlayer.StarterCharacterScripts)
-ScanZone(game.Players.LocalPlayer.PlayerGui)
-ScanZone(game.Players.LocalPlayer.Backpack)
+-- Кнопка для запуска одного цикла «Фаззинга»
+local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
+local Btn = Instance.new("TextButton", ScreenGui)
+Btn.Size = UDim2.new(0, 200, 0, 50)
+Btn.Position = UDim2.new(0.5, -100, 0.8, 0)
+Btn.Text = "FUZZ ATTACK (KILL BOSS)"
+Btn.BackgroundColor3 = Color3.fromRGB(200, 0, 200)
+Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
 
-AddToLog("--- SCAN COMPLETE ---")
-print("Logic Hunter finished. Check the list!")
+Btn.MouseButton1Click:Connect(function()
+    Fuzz()
+    print("Fuzzing signals sent!")
+end)
