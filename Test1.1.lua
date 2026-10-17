@@ -1,21 +1,21 @@
--- LocalScript (executor) — full tree + script dump to file
--- Writes to Workspace/TBSOBR_DUMP.txt (executor folder).
--- Appends line by line so it doesn't crash on mobile.
+-- LocalScript (executor) — fast script + remote dump
+-- No full tree walk. Only Scripts, LocalScripts, ModuleScripts, Remotes.
+-- No 1-minute waits. Batches into memory and writes once per 100 items.
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local filename = "TBSOBR_DUMP.txt"
 
--- GUI forced to the absolute top layer
+-- GUI
 local gui = Instance.new("ScreenGui")
-gui.Name = "OllieDump"
+gui.Name = "OllieFastDump"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
 gui.DisplayOrder = 2147483647
 gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0.9, 0, 0.15, 0)
+frame.Size = UDim2.new(0.9, 0, 0.1, 0)
 frame.Position = UDim2.new(0.05, 0, 0.05, 0)
 frame.BackgroundColor3 = Color3.fromRGB(18, 16, 26)
 frame.BorderSizePixel = 0
@@ -35,46 +35,80 @@ status.TextSize = 14
 status.TextWrapped = true
 status.Parent = frame
 
-task.wait(1) -- let GUI render before scan freezes
+task.wait(0.5)
 
--- file init
-local ok, err = pcall(function()
-    writefile(filename, "-- TBSOBR FULL DUMP\n-- Place: " .. tostring(game.PlaceId) .. "\n\n")
-end)
-
-if not ok then
-    status.Text = "writefile failed: " .. tostring(err)
-    return
+local function getPath(obj)
+    local parts = {}
+    local cur = obj
+    while cur and cur ~= game do
+        table.insert(parts, 1, cur.Name)
+        cur = cur.Parent
+    end
+    return "game." .. table.concat(parts, ".")
 end
 
+-- Only scan these game areas
+local SCAN_ROOTS = {
+    game:GetService("ReplicatedStorage"),
+    game:GetService("ServerScriptService"),
+    game:GetService("ServerStorage"),
+    game:GetService("StarterGui"),
+    game:GetService("StarterPack"),
+    game:GetService("Workspace"),
+}
+
+local out = {}
+table.insert(out, "-- TBSOBR FAST DUMP | Place: " .. tostring(game.PlaceId) .. "\n\n")
+
 local count = 0
-local function dump(inst, depth)
-    for _, child in ipairs(inst:GetChildren()) do
-        if child.Name == "CoreGui" or child.Name == "CorePackages" then
-            -- skip
-        else
-            count = count + 1
-            if count % 20 == 0 then
-                status.Text = "scanning... " .. count .. " objects"
-                task.wait() -- yield to prevent mobile crash
-            end
+for _, root in ipairs(SCAN_ROOTS) do
+    if root then
+        for _, d in ipairs(root:GetDescendants()) do
+            local isScript = d:IsA("LuaSourceContainer")
+            local isRemote = d:IsA("RemoteEvent") or d:IsA("RemoteFunction")
             
-            local indent = string.rep("  ", depth)
-            local line = indent .. "[" .. child.ClassName .. "] " .. child.Name .. "\n"
-            pcall(appendfile, filename, line)
-            
-            if child:IsA("LuaSourceContainer") then
-                local okSrc, src = pcall(function() return child.Source end)
-                if okSrc and src and #src > 0 then
-                    pcall(appendfile, filename, indent .. "  --- SOURCE START ---\n" .. src .. "\n" .. indent .. "  --- SOURCE END ---\n")
+            if isScript or isRemote then
+                count = count + 1
+                if count % 100 == 0 then
+                    status.Text = "found " .. count .. " items..."
+                    task.wait()
+                end
+
+                local path = getPath(d)
+                
+                -- Skip CoreScripts
+                if not path:find("PlayerScripts.PlayerModule") 
+                and not path:find("RbxCharacterSounds")
+                and not path:find("ChatScript")
+                and not path:find("HDAdmin") 
+                and not path:find("TouchGui") then
+                    
+                    table.insert(out, "[" .. d.ClassName .. "] " .. path)
+                    
+                    if isScript then
+                        local okSrc, src = pcall(function() return d.Source end)
+                        if okSrc and src and #src > 0 then
+                            table.insert(out, "--- SOURCE START ---")
+                            table.insert(out, src)
+                            table.insert(out, "--- SOURCE END ---\n")
+                        end
+                    end
                 end
             end
-            
-            dump(child, depth + 1)
         end
     end
 end
 
-dump(game, 0)
+status.Text = "writing " .. count .. " items..."
+task.wait()
 
-status.Text = "done · " .. count .. " objects\nSaved to Workspace/" .. filename
+local finalStr = table.concat(out, "\n")
+local ok, err = pcall(function()
+    writefile(filename, finalStr)
+end)
+
+if ok then
+    status.Text = "done! " .. count .. " items saved to " .. filename
+else
+    status.Text = "write failed: " .. tostring(err)
+end
