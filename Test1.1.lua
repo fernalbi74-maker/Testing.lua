@@ -1,7 +1,7 @@
--- LocalScript (executor) — labeled dumper
--- Each script gets: [CLASS] path  |  inferred purpose
--- Purpose guessed from name, parent, and source keywords.
--- Output is chunked, clipboard-exported, never freezes the client.
+-- LocalScript (executor) — TBSOBR targeted scan
+-- Skips all CoreScripts / PlayerModule / character sounds noise.
+-- Only game-authored remotes, modules, and server scripts.
+-- Small output, clipboard-exported, labeled by purpose.
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
@@ -11,93 +11,48 @@ local BG = Color3.fromRGB(18, 16, 26)
 local TEXT = Color3.fromRGB(235, 230, 255)
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "OllieDumpV2"
+gui.Name = "OllieTBSOBR"
 gui.ResetOnSpawn = false
 gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local label = Instance.new("TextLabel")
-label.Size = UDim2.new(0, 380, 0, 56)
+label.Size = UDim2.new(0, 420, 0, 60)
 label.Position = UDim2.new(0, 24, 0, 24)
 label.BackgroundColor3 = BG
 label.BackgroundTransparency = 0.1
 label.BorderSizePixel = 0
-label.Text = "ollie dumper v2 · press Execute"
+label.Text = "ollie TBSOBR scan · press Execute"
 label.TextColor3 = ACCENT
 label.Font = Enum.Font.GothamBold
 label.TextSize = 13
 label.TextWrapped = true
 label.Parent = gui
+Instance.new("UICorner", gui).CornerRadius = UDim.new(0, 8)
 
-local c = Instance.new("UICorner")
-c.CornerRadius = UDim.new(0, 8)
-c.Parent = label
-
--- ── purpose heuristic ─────────────────────────────────────────
--- name/parent first, source keywords second. No false confidence:
--- if nothing matches, label stays "general".
-local PURPOSE_RULES = {
-    { match = "ControlModule",          tag = "player movement / walk controller" },
-    { match = "CameraModule",           tag = "camera control" },
-    { match = "ClickToMove",            tag = "click-to-move pathfinding" },
-    { match = "Pathfinding",            tag = "pathfinding / navigation" },
-    { match = "PlayerModule",           tag = "player controller bundle" },
-    { match = "Animate",                tag = "character animation" },
-    { match = "Health",                 tag = "health / damage display" },
-    { match = "Sound",                  tag = "audio" },
-    { match = "Chat",                   tag = "chat system" },
-    { match = "Leaderboard",            tag = "leaderboard" },
-    { match = "Inventory",              tag = "inventory" },
-    { match = "Shop",                   tag = "shop / store" },
-    { match = "Quest",                  tag = "quest system" },
-    { match = "Tower",                  tag = "tower / defense logic (TBSOBR)" },
-    { match = "Wave",                   tag = "wave spawner" },
-    { match = "Enemy",                  tag = "enemy logic" },
-    { match = "Remote",                 tag = "remote event handler" },
-    { match = "DataStore",              tag = "data persistence" },
-    { match = "Save",                   tag = "save / load" },
-    { match = "AntiCheat",              tag = "anti-cheat / detection" },
-    { match = "Anti",                   tag = "anti-* (cheat/exploit guard)" },
-    { match = "Admin",                  tag = "admin commands" },
-    { match = "Gui",                    tag = "gui" },
-    { match = "UI",                     tag = "ui" },
-    { match = "Notification",           tag = "notifications" },
-    { match = "Tween",                  tag = "tweening / transitions" },
-    { match = "Util",                   tag = "utility helpers" },
-    { match = "Common",                 tag = "shared utilities" },
-    { match = "Config",                 tag = "config / constants" },
-    { match = "Module",                 tag = "module (required by others)" },
+-- noise filter: anything under these prefixes is Roblox Core, not game
+local NOISE_PREFIXES = {
+    "Players.fernalki15.PlayerScripts.PlayerModule",
+    "Players.fernalki15.PlayerScripts.RbxCharacterSounds",
+    "Players.fernalki15.PlayerScripts.ChatScript",
+    "Players.fernalki15.PlayerScripts.Chunk",
+    "Players.fernalki15.PlayerGui.TouchGui",
+    "Players.fernalki15.PlayerGui.ScreenGui",
+    "Players.fernalki15.PlayerGui.Shiftlock",
+    "Players.fernalki15.PlayerGui.HDAdmin",
+    "Players.fernalki15.PlayerScripts.E666Screenshake",
+    "ReplicatedStorage.HDAdmin",
+    "ReplicatedStorage.Roblox",
+    "StarterGui.PlayerModule",
+    "StarterGui.ScreenGui",
 }
 
-local KEYWORD_RULES = {
-    { keyword = "FireServer",           tag = "fires remote → server (exploitable surface)" },
-    { keyword = "InvokeServer",         tag = "invokes remote → server (exploitable surface)" },
-    { keyword = "Humanoid",             tag = "character / humanoid" },
-    { keyword = "Tower",                tag = "tower logic" },
-    { keyword = "Wave",                 tag = "wave / round" },
-    { keyword = "Damage",               tag = "damage calc" },
-    { keyword = "Coins",                tag = "currency" },
-    { keyword = "Cash",                 tag = "currency" },
-    { keyword = "Gems",                 tag = "currency" },
-    { keyword = "Level",                tag = "level / xp" },
-    { keyword = "AntiCheat",            tag = "anti-cheat" },
-    { keyword = "Kick",                 tag = "moderation / kick" },
-    { keyword = "Ban",                  tag = "moderation / ban" },
-    { keyword = "HTTP",                 tag = "http request" },
-    { keyword = "Marketplace",          tag = "marketplace" },
-}
-
-local function inferPurpose(scr, src)
-    local hay = (scr.Name or "") .. " " .. (scr:GetFullName() or "")
-    for _, r in ipairs(PURPOSE_RULES) do
-        if hay:find(r.match) then return r.tag end
+local function isNoise(fullname)
+    for _, p in ipairs(NOISE_PREFIXES) do
+        if fullname:sub(1, #p) == p then return true end
     end
-    for _, r in ipairs(KEYWORD_RULES) do
-        if src:find(r.keyword) then return r.tag end
-    end
-    return "general / unlabeled"
+    return false
 end
 
--- ── helpers ───────────────────────────────────────────────────
 local function getPath(obj)
     local parts = {}
     local cur = obj
@@ -109,12 +64,7 @@ local function getPath(obj)
 end
 
 local function safeSource(scr)
-    local ok, src = pcall(function()
-        if scr:IsA("LocalScript") or scr:IsA("Script") or scr:IsA("ModuleScript") then
-            return scr.Source
-        end
-        return nil
-    end)
+    local ok, src = pcall(function() return scr.Source end)
     if ok and src and #src > 0 then return src end
     if decompile then
         local ok2, dec = pcall(decompile, scr)
@@ -123,90 +73,123 @@ local function safeSource(scr)
     return ""
 end
 
--- ── main dump ─────────────────────────────────────────────────
+-- look for remote-calling patterns in source
+local REMOTE_PATTERNS = {
+    { pat = ":FireServer%(",   kind = "FireServer" },
+    { pat = ":InvokeServer%(", kind = "InvokeServer" },
+    { pat = ":FireAllClients%(", kind = "FireAllClients" },
+}
+
+local function extractRemotes(src)
+    local hits = {}
+    for _, r in ipairs(REMOTE_PATTERNS) do
+        for line in src:gmatch("[^\n]+") do
+            if line:find(r.pat) then
+                table.insert(hits, r.kind .. " → " .. line:gsub("^%s+", ""):sub(1, 100))
+            end
+        end
+    end
+    return hits
+end
+
+-- scan only game-authored locations, not core
+local SCAN_ROOTS = {
+    game:GetService("ReplicatedStorage"),
+    game:GetService("ServerScriptService"),
+    game:GetService("ServerStorage"),
+    game:GetService("StarterGui"),
+    game:GetService("StarterPack"),
+    game:GetService("Workspace"),
+}
+
 local function dump()
-    label.Text = "scanning…"
+    label.Text = "scanning game scripts…"
     task.wait()
 
-    local scripts
-    local ok = pcall(function()
-        if getscripts then
-            scripts = getscripts()
-        else
-            scripts = {}
-            for _, name in ipairs({"ReplicatedStorage", "StarterGui", "StarterPack", "Workspace", "Lighting"}) do
-                local svc = game:FindService(name)
-                if svc then
-                    for _, d in ipairs(svc:GetDescendants()) do
-                        if d:IsA("LuaSourceContainer") then table.insert(scripts, d) end
+    local found = {}
+    local remoteIndex = {}  -- remote name -> {calledBy}
+
+    for _, root in ipairs(SCAN_ROOTS) do
+        if root then
+            for _, d in ipairs(root:GetDescendants()) do
+                if d:IsA("LuaSourceContainer") then
+                    local full = getPath(d):gsub("^game%.", "")
+                    if not isNoise(full) then
+                        table.insert(found, d)
                     end
+                elseif d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then
+                    remoteIndex[getPath(d)] = {}
                 end
             end
         end
-    end)
-
-    if not ok or not scripts then
-        label.Text = "getscripts() failed"
-        return
     end
 
-    -- build a compact summary first
-    local summary = {}
-    local bodies = {}
-    local counts = {}
+    -- also enumerate remotes directly
+    local remoteList = {}
+    for path, _ in pairs(remoteIndex) do
+        table.insert(remoteList, path)
+    end
+    table.sort(remoteList)
 
-    for i, scr in ipairs(scripts) do
-        if i % 8 == 0 then
-            label.Text = string.format("scanning… %d / %d", i, #scripts)
+    local out = {}
+    table.insert(out, "-- TBSOBR targeted dump | " .. os.date("!%Y-%m-%d %H:%M:%S") .. " UTC")
+    table.insert(out, "-- place: " .. tostring(game.PlaceId) .. "  |  game scripts: " .. #found)
+    table.insert(out, "")
+
+    table.insert(out, "-- ═══════════ REMOTES (" .. #remoteList .. ") ═══════════")
+    for _, r in ipairs(remoteList) do
+        table.insert(out, "--   " .. r)
+    end
+    table.insert(out, "")
+
+    table.insert(out, "-- ═══════════ GAME SCRIPTS (" .. #found .. ") ═══════════")
+    for i, scr in ipairs(found) do
+        if i % 5 == 0 then
+            label.Text = string.format("scanning… %d / %d", i, #found)
             task.wait()
         end
 
-        local path = getPath(scr)
-        local cls = scr.ClassName
         local src = safeSource(scr)
-        local purpose = inferPurpose(scr, src)
+        local remotes = extractRemotes(src)
+        local path = getPath(scr)
 
-        counts[purpose] = (counts[purpose] or 0) + 1
-
-        table.insert(summary, string.format("[%s] %s  —  %s  (%d chars)",
-            cls, path, purpose, #src))
-
-        table.insert(bodies, string.format("-- ═══════════════════════════════════════════════════════════\n-- %s\n-- class: %s\n-- purpose: %s\n-- path: %s\n-- chars: %d\n-- ═══════════════════════════════════════════════════════════\n%s\n",
-            scr.Name, cls, purpose, path, #src, src))
+        table.insert(out, "")
+        table.insert(out, string.rep("═", 60))
+        table.insert(out, "-- [" .. scr.ClassName .. "] " .. path)
+        if #remotes > 0 then
+            table.insert(out, "-- REMOTE CALLS:")
+            for _, r in ipairs(remotes) do
+                table.insert(out, "--   " .. r)
+            end
+        end
+        table.insert(out, string.rep("═", 60))
+        table.insert(out, src)
     end
-
-    -- header
-    local out = {}
-    table.insert(out, "-- ollie dump v2 | " .. os.date("!%Y-%m-%d %H:%M:%S") .. " UTC")
-    table.insert(out, "-- place: " .. tostring(game.PlaceId))
-    table.insert(out, "-- total scripts: " .. tostring(#scripts))
-    table.insert(out, "")
-    table.insert(out, "-- ── PURPOSE SUMMARY ──")
-    for purpose, n in pairs(counts) do
-        table.insert(out, string.format("--   %-50s %d", purpose, n))
-    end
-    table.insert(out, "")
-    table.insert(out, "-- ── INDEX ──")
-    for _, line in ipairs(summary) do
-        table.insert(out, "--   " .. line)
-    end
-    table.insert(out, "")
-    table.insert(out, "-- ── SOURCE ──")
-    table.insert(out, table.concat(bodies, "\n"))
 
     local full = table.concat(out, "\n")
     local kb = math.floor(#full / 1024)
 
     if setclipboard then
         pcall(setclipboard, full)
-        label.Text = string.format("done · %d scripts · %d KB → clipboard\n(index first, source after)", #scripts, kb)
+        label.Text = string.format("done · %d scripts + %d remotes · %d KB → clipboard",
+            #found, #remoteList, kb)
     elseif writefile then
-        local ok2 = pcall(writefile, "ollie_dump_v2.txt", full)
-        label.Text = ok2 and ("done · saved ollie_dump_v2.txt · " .. kb .. " KB")
-            or "done · writefile failed"
+        pcall(writefile, "tsob_dump.txt", full)
+        label.Text = "done · saved tsob_dump.txt · " .. kb .. " KB"
     else
         print(full)
         label.Text = "done · printed to console"
+    end
+end
+
+-- also print remotes live to console immediately (even if scripts fail)
+for _, root in ipairs(SCAN_ROOTS) do
+    if root then
+        for _, d in ipairs(root:GetDescendants()) do
+            if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then
+                print("[REMOTE] " .. d.ClassName .. " " .. getPath(d))
+            end
+        end
     end
 end
 
