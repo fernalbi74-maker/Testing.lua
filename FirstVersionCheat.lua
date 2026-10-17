@@ -1,97 +1,129 @@
--- GGE NUCLEAR BOSS-SLAYER v1.0
--- Максимальный перебор аргументов + Копируемый список скриптов
+-- LocalScript (executor) — TBSOBR Godmode & Auto-Dodge
+-- Bypasses server damage by forcing Humanoid health to max.
+-- Adds Noclip, Fly, and a hitbox avoider.
 
-local Player = game.Players.LocalPlayer
-local AttackFolder = game.Lighting:FindFirstChild("AttackTools")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
 
--- Настройки атаки
-local Damage = 9999999
-local AttackInterval = 0.5 -- Скорость атаки (сек)
+local godmode = true
+local noclip = true
+local autoDodge = true
 
--- Создание UI
-local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
+-- GUI
+local ACCENT = Color3.fromRGB(140, 100, 255)
+local BG = Color3.fromRGB(18, 16, 26)
 
--- 1. КНОПКА АТАКИ
-local AttackBtn = Instance.new("TextButton", ScreenGui)
-AttackBtn.Size = UDim2.new(0, 200, 0, 50)
-AttackBtn.Position = UDim2.new(0.5, -100, 0.7, 0)
-AttackBtn.Text = "START NUCLEAR ATTACK"
-AttackBtn.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-AttackBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-AttackBtn.TextSize = 18
+local gui = Instance.new("ScreenGui")
+gui.Name = "TBSOBR_Cheat"
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 2147483647
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
--- 2. КОПИРУЕМОЕ ОКНО СПИСКА (TextBox вместо TextLabel)
-local CopyBox = Instance.new("TextBox", ScreenGui)
-CopyBox.Size = UDim2.new(0, 300, 0, 300)
-CopyBox.Position = UDim2.new(0, 10, 0, 10)
-CopyBox.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-CopyBox.TextColor3 = Color3.fromRGB(0, 255, 0)
-CopyBox.TextXAlignment = Enum.TextXAlignment.Left
-CopyBox.TextYAlignment = Enum.TextYAlignment.Top
-CopyBox.ClearTextOnFocus = false
-CopyBox.MultiLine = true
-CopyBox.Text = "Loading scripts..."
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 200, 0, 150)
+frame.Position = UDim2.new(0, 20, 0, 20)
+frame.BackgroundColor3 = BG
+frame.Active = true
+frame.Draggable = true
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 
-local Active = false
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 30)
+title.BackgroundTransparency = 1
+title.Text = "ollie · TBSOBR"
+title.TextColor3 = ACCENT
+title.Font = Enum.Font.GothamBold
+title.Parent = frame
 
--- Поиск босса/цели
-local function GetTarget()
-    for _, obj in pairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") and obj ~= Player.Character then
-            return obj
-        end
-    end
-    return nil
+local function makeToggle(text, y, state)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -20, 0, 30)
+    btn.Position = UDim2.new(0, 10, 0, y)
+    btn.BackgroundColor3 = state and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(40, 40, 40)
+    btn.Text = text .. (state and " [ON]" or " [OFF]")
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 12
+    btn.Parent = frame
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    return btn
 end
 
--- Ядерный цикл атак
-local function NuclearAttack()
-    local target = GetTarget()
-    if not target then return end
+local godBtn = makeToggle("Godmode", 35, true)
+local noclipBtn = makeToggle("Noclip", 70, true)
+local dodgeBtn = makeToggle("Auto-Dodge", 105, true)
+
+godBtn.MouseButton1Click:Connect(function()
+    godmode = not godmode
+    godBtn.Text = "Godmode " .. (godmode and "[ON]" or "[OFF]")
+    godBtn.BackgroundColor3 = godmode and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(40, 40, 40)
+end)
+
+noclipBtn.MouseButton1Click:Connect(function()
+    noclip = not noclip
+    noclipBtn.Text = "Noclip " .. (noclip and "[ON]" or "[OFF]")
+    noclipBtn.BackgroundColor3 = noclip and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(40, 40, 40)
+end)
+
+dodgeBtn.MouseButton1Click:Connect(function()
+    autoDodge = not autoDodge
+    dodgeBtn.Text = "Auto-Dodge " .. (autoDodge and "[ON]" or "[OFF]")
+    dodgeBtn.BackgroundColor3 = autoDodge and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(40, 40, 40)
+end)
+
+-- Godmode: If health drops, instantly heal back.
+local function hookChar(char)
+    local hum = char:WaitForChild("Humanoid", 5)
+    if not hum then return end
     
-    for _, remote in pairs(AttackFolder:GetDescendants()) do
-        if remote:IsA("RemoteEvent") then
-            pcall(function()
-                -- ПЕРЕБОР 10 ВАРИАНТОВ АРГУМЕНТОВ
-                remote:FireServer(target, Damage) -- (Цель, Урон)
-                remote:FireServer(Damage, target) -- (Урон, Цель)
-                remote:FireServer("Damage", target, Damage) -- (Команда, Цель, Урон)
-                remote:FireServer("Attack", target, Damage) -- (Команда, Цель, Урон)
-                remote:FireServer(target, {Damage = Damage}) -- (Цель, Таблица)
-                remote:FireServer({Target = target, Damage = Damage}) -- (Таблица всего)
-                remote:FireServer(target, "Kill") -- (Цель, Команда смерти)
-                remote:FireServer(target, target.HumanoidRootPart.Position, Damage) -- (Цель, Позиция, Урон)
-                remote:FireServer(target, Vector3.new(0,0,0), Damage) -- (Цель, Нулевой вектор, Урон)
-                remote:FireServer(Damage, Damage, target) -- (Урон, Урон, Цель)
-            end)
+    hum.HealthChanged:Connect(function(hp)
+        if godmode and hp < hum.MaxHealth and hp > 0 then
+            hum.Health = hum.MaxHealth
         end
-    end
+    end)
+    
+    RunService.Stepped:Connect(function()
+        if godmode and hum.Parent and hum.Health > 0 then
+            if hum.Health < hum.MaxHealth then
+                hum.Health = hum.MaxHealth
+            end
+        end
+    end)
 end
 
--- Запуск цикла
-task.spawn(function()
-    while true do
-        if Active then
-            NuclearAttack()
+if LocalPlayer.Character then hookChar(LocalPlayer.Character) end
+LocalPlayer.CharacterAdded:Connect(hookChar)
+
+-- Noclip and Auto-Dodge loops
+RunService.Stepped:Connect(function()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    if not hrp or not hum then return end
+
+    -- Noclip
+    if noclip then
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then p.CanCollide = false end
         end
-        task.wait(AttackInterval)
+    end
+
+    -- Auto-Dodge (Push away from nearby moving parts)
+    if autoDodge then
+        for _, obj in ipairs(workspace:GetChildren()) do
+            -- TBSOBR attacks are usually Neon parts or Meshes
+            if obj:IsA("BasePart") and (obj.Name:find("Bone") or obj.Name:find("Spike") or obj.Name:find("Blaster") or obj.Name:find("Tentacle") or obj.Name:find("Knife") or obj.Name:find("Attack") or obj.Material == Enum.Material.Neon) then
+                if obj.CanTouch and not obj:IsDescendantOf(char) then
+                    local dist = (obj.Position - hrp.Position).Magnitude
+                    if dist < 15 then
+                        local dir = (hrp.Position - obj.Position).Unit
+                        hrp.CFrame = hrp.CFrame + (dir * 5) -- teleport away
+                    end
+                end
+            end
+        end
     end
 end)
-
--- Переключатель
-AttackBtn.MouseButton1Click:Connect(function()
-    Active = not Active
-    AttackBtn.Text = Active and "STOP ATTACK" or "START NUCLEAR ATTACK"
-    AttackBtn.BackgroundColor3 = Active and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
-end)
-
--- Заполнение CopyBox списком скриптов (теперь можно копировать!)
-local scriptList = ""
-for _, obj in pairs(game.ReplicatedStorage:GetDescendants()) do
-    if obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
-        scriptList = scriptList .. obj:GetFullName() .. "\n"
-    end
-end
-CopyBox.Text = scriptList == "" and "No scripts found" or scriptList
-
-print("Nuclear Slayer Loaded. You can now copy scripts from the box!")
