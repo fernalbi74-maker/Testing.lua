@@ -1,75 +1,76 @@
--- LocalScript (executor) — Find boss TrueHp and hidden scripts
--- Scans for custom HP values and hidden server scripts.
+-- LocalScript (executor) — TBSOBR Hitbox Wiper
+-- Finds every damage script in Workspace and destroys its parent part.
+-- This stops TouchDamage from registering on you.
 
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "OllieFinder"
+gui.Name = "TBSOBR_Wiper"
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 2147483647
 gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0.9, 0, 0.4, 0)
-frame.Position = UDim2.new(0.05, 0, 0.3, 0)
-frame.BackgroundColor3 = Color3.fromRGB(18, 16, 26)
-frame.Active = true
-frame.Draggable = true
-frame.Parent = gui
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
-
 local label = Instance.new("TextLabel")
-label.Size = UDim2.new(1, -20, 1, -20)
-label.Position = UDim2.new(0, 10, 0, 10)
-label.BackgroundTransparency = 1
-label.Text = "Scanning for TrueHp and hidden scripts..."
-label.TextColor3 = Color3.fromRGB(140, 100, 255)
-label.Font = Enum.Font.Code
-label.TextSize = 12
-label.TextWrapped = true
-label.Parent = frame
+label.Size = UDim2.new(0.9, 0, 0.1, 0)
+label.Position = UDim2.new(0.05, 0, 0.05, 0)
+label.BackgroundColor3 = Color3.fromRGB(18, 16, 26)
+label.Text = "Hitbox Wiper: ACTIVE"
+label.TextColor3 = Color3.fromRGB(0, 255, 100)
+label.Font = Enum.Font.GothamBold
+label.TextSize = 14
+label.Parent = gui
+Instance.new("UICorner", label).CornerRadius = UDim.new(0, 8)
 
-task.wait(1)
-
-local results = {}
-local count = 0
-
--- 1. Find TrueHp / custom health values
-for _, v in ipairs(workspace:GetDescendants()) do
-    if v:IsA("NumberValue") or v:IsA("IntValue") or v:IsA("StringValue") then
-        if v.Name:lower():find("hp") or v.Name:lower():find("health") or v.Name:lower():find("damage") then
-            count = count + 1
-            local path = v:GetFullName()
-            local val = tostring(v.Value)
-            table.insert(results, string.format("-- [%s] %s = %s", v.ClassName, path, val))
+-- Scans for damage scripts and destroys their parent
+local function wipeHitboxes()
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("Script") or v:IsA("LocalScript") then
+            local name = v.Name:lower()
+            if name:find("damage") or name:find("touchdamage") or name:find("kill") then
+                -- If it's a damage script, destroy the part it's attached to
+                local parent = v.Parent
+                if parent and (parent:IsA("BasePart") or parent:IsA("Model")) then
+                    parent:Destroy()
+                else
+                    v:Destroy()
+                end
+            end
+        end
+        -- Also catch parts named Damage or Hitbox
+        if v:IsA("BasePart") then
+            local pName = v.Name:lower()
+            if pName:find("damage") or pName:find("hitbox") then
+                v:Destroy()
+            end
         end
     end
 end
 
--- 2. Find hidden scripts in Workspace
-for _, v in ipairs(workspace:GetDescendants()) do
-    if v:IsA("LuaSourceContainer") then
-        if v.Name:lower():find("hitbox") or v.Name:lower():find("damage") or v.Name:lower():find("kill") or v.Name:lower():find("boss") then
-            count = count + 1
-            table.insert(results, string.format("-- [SCRIPT] %s (%s)", v:GetFullName(), v.ClassName))
+-- Run continuously to catch new spawns
+task.spawn(function()
+    while task.wait(0.5) do
+        pcall(wipeHitboxes)
+    end
+end)
+
+-- Keep your own body safe
+RunService.Stepped:Connect(function()
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChild("Humanoid")
+        if hum then
+            hum.MaxHealth = 1e9
+            if hum.Health < 1e9 then hum.Health = 1e9 end
+            hum.WalkSpeed = 100
+        end
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then
+                p.CanCollide = false
+                p.CanQuery = false
+                p.CanTouch = false
+            end
         end
     end
-end
-
--- 3. Find Remotes that might be damage
-for _, v in ipairs(game:GetDescendants()) do
-    if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-        if v.Name:lower():find("hit") or v.Name:lower():find("damage") or v.Name:lower():find("attack") then
-            count = count + 1
-            table.insert(results, string.format("-- [REMOTE] %s (%s)", v:GetFullName(), v.ClassName))
-        end
-    end
-end
-
-local out = table.concat(results, "\n")
-label.Text = "Found " .. count .. " items.\n\n" .. out
-
-if setclipboard then
-    pcall(setclipboard, out)
-end
+end)
