@@ -1,120 +1,130 @@
--- LocalScript (executor) — read-only dumper
+-- LocalScript (executor) — lag-free dumper
+-- Uses getscripts() instead of recursive :GetDescendants()
+-- pcall every read, chunked loop with task.wait, no GUI freeze
+
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
 local ACCENT = Color3.fromRGB(140, 100, 255)
 local BG = Color3.fromRGB(18, 16, 26)
-local BTN = Color3.fromRGB(32, 28, 46)
 local TEXT = Color3.fromRGB(235, 230, 255)
 
+-- tiny status label, non-blocking
 local gui = Instance.new("ScreenGui")
-gui.Name = "OllieDumper"
+gui.Name = "OllieDump"
 gui.ResetOnSpawn = false
 gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 520, 0, 380)
-frame.Position = UDim2.new(0.5, -260, 0.5, -190)
-frame.BackgroundColor3 = BG
-frame.BackgroundTransparency = 0.05
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Draggable = true
-frame.Parent = gui
+local label = Instance.new("TextLabel")
+label.Size = UDim2.new(0, 340, 0, 40)
+label.Position = UDim2.new(0, 24, 0, 24)
+label.BackgroundColor3 = BG
+label.BackgroundTransparency = 0.1
+label.BorderSizePixel = 0
+label.Text = "ollie dumper · press Execute to scan"
+label.TextColor3 = ACCENT
+label.Font = Enum.Font.GothamBold
+label.TextSize = 13
+label.TextWrapped = true
+label.Parent = gui
 
 local c = Instance.new("UICorner")
-c.CornerRadius = UDim.new(0, 12)
-c.Parent = frame
-local s = Instance.new("UIStroke")
-s.Color = ACCENT
-s.Thickness = 1.5
-s.Transparency = 0.4
-s.Parent = frame
+c.CornerRadius = UDim.new(0, 8)
+c.Parent = label
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -20, 0, 32)
-title.Position = UDim2.new(0, 12, 0, 6)
-title.BackgroundTransparency = 1
-title.Text = "ollie · script dumper"
-title.TextColor3 = ACCENT
-title.Font = Enum.Font.GothamBold
-title.TextSize = 15
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = frame
-
-local scanBtn = Instance.new("TextButton")
-scanBtn.Size = UDim2.new(0, 110, 0, 28)
-scanBtn.Position = UDim2.new(1, -130, 0, 8)
-scanBtn.BackgroundColor3 = ACCENT
-scanBtn.BorderSizePixel = 0
-scanBtn.Text = "Scan"
-scanBtn.TextColor3 = Color3.fromRGB(20, 16, 30)
-scanBtn.Font = Enum.Font.GothamBold
-scanBtn.TextSize = 12
-scanBtn.Parent = frame
-local c2 = Instance.new("UICorner"); c2.CornerRadius = UDim.new(0, 6); c2.Parent = scanBtn
-
-local scroll = Instance.new("ScrollingFrame")
-scroll.Size = UDim2.new(1, -24, 1, -56)
-scroll.Position = UDim2.new(0, 12, 0, 42)
-scroll.BackgroundColor3 = Color3.fromRGB(12, 10, 18)
-scroll.BorderSizePixel = 0
-scroll.ScrollBarThickness = 6
-scroll.ScrollBarImageColor3 = ACCENT
-scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-scroll.Parent = frame
-local c3 = Instance.new("UICorner"); c3.CornerRadius = UDim.new(0, 8); c3.Parent = scroll
-
-local list = Instance.new("UIListLayout")
-list.Padding = UDim.new(0, 2)
-list.SortOrder = Enum.SortOrder.LayoutOrder
-list.Parent = scroll
-
-local function addRow(text, indent)
-    local row = Instance.new("TextLabel")
-    row.Size = UDim2.new(1, -8, 0, 18)
-    row.BackgroundTransparency = 1
-    row.Text = text
-    row.TextXAlignment = Enum.TextXAlignment.Left
-    row.TextColor3 = TEXT
-    row.Font = Enum.Font.Code
-    row.TextSize = 12
-    row.Parent = scroll
-    row.Position = UDim2.new(0, (indent or 0) * 12, 0, 0)
-    return row
+-- helpers
+local function getPath(obj)
+    local parts = {}
+    local cur = obj
+    while cur and cur ~= game do
+        table.insert(parts, 1, cur.Name)
+        cur = cur.Parent
+    end
+    return "game." .. table.concat(parts, ".")
 end
 
-local function dump()
-    for _, ch in ipairs(scroll:GetChildren()) do
-        if ch:IsA("TextLabel") then ch:Destroy() end
-    end
-
-    local count = 0
-    local function walk(inst, depth)
-        for _, child in ipairs(inst:GetChildren()) do
-            if child:IsA("LuaSourceContainer") then
-                count += 1
-                local kind = child.ClassName
-                local src = ""
-                pcall(function()
-                    if child:IsA("LocalScript") or child:IsA("Script") or child:IsA("ModuleScript") then
-                        src = child.Source or ""
-                    end
-                end)
-                local line = string.format("[%s] %s  (%d chars)", kind, child:GetFullName(), #src)
-                addRow(line, depth)
-            end
-            walk(child, depth + 1)
+local function safeSource(scr)
+    local ok, src = pcall(function()
+        if scr:IsA("LocalScript") or scr:IsA("Script") or scr:IsA("ModuleScript") then
+            return scr.Source
         end
+        return nil
+    end)
+    if ok and src and #src > 0 then return src end
+    -- fallback to executor decompiler if available
+    if decompile then
+        local ok2, dec = pcall(decompile, scr)
+        if ok2 and dec then return dec end
     end
-
-    walk(game, 0)
-    addRow(string.format("── %d scripts found ──", count), 0)
-    scroll.CanvasSize = UDim2.new(0, 0, 0, list.AbsoluteContentSize.Y + 8)
+    return "--[[ source unavailable ]]"
 end
 
-scanBtn.MouseButton1Click:Connect(dump)
-list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    scroll.CanvasSize = UDim2.new(0, 0, 0, list.AbsoluteContentSize.Y + 8)
-end)
+-- main dump — chunked, yields every 8 scripts
+local function dump()
+    label.Text = "scanning…"
+    task.wait()
+
+    local scripts
+    local ok = pcall(function()
+        if getscripts then
+            scripts = getscripts()
+        else
+            -- fallback: manual walk but only services likely to hold scripts
+            scripts = {}
+            local services = { "ReplicatedStorage", "StarterGui", "StarterPack", "Workspace", "Lighting" }
+            for _, name in ipairs(services) do
+                local svc = game:FindService(name)
+                if svc then
+                    for _, d in ipairs(svc:GetDescendants()) do
+                        if d:IsA("LuaSourceContainer") then
+                            table.insert(scripts, d)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    if not ok or not scripts then
+        label.Text = "getscripts() failed — executor too limited"
+        return
+    end
+
+    local out = {}
+    table.insert(out, "-- ollie dump | " .. os.date("!%Y-%m-%d %H:%M:%S") .. " UTC")
+    table.insert(out, "-- place: " .. tostring(game.PlaceId))
+    table.insert(out, "-- scripts: " .. tostring(#scripts))
+    table.insert(out, "")
+
+    for i, scr in ipairs(scripts) do
+        if i % 8 == 0 then
+            label.Text = string.format("scanning… %d / %d", i, #scripts)
+            task.wait() -- yield so client doesn't freeze
+        end
+
+        local path = getPath(scr)
+        local class = scr.ClassName
+        local src = safeSource(scr)
+
+        table.insert(out, string.format("-- %s [%s]", path, class))
+        table.insert(out, src)
+        table.insert(out, "")
+    end
+
+    local full = table.concat(out, "\n")
+    local size = #full
+
+    -- prefer clipboard, then file
+    if setclipboard then
+        pcall(setclipboard, full)
+        label.Text = string.format("done · %d scripts · %d KB copied to clipboard", #scripts, math.floor(size / 1024))
+    elseif writefile then
+        local ok2 = pcall(writefile, "ollie_dump.txt", full)
+        label.Text = ok2 and ("done · saved to ollie_dump.txt") or "done · no clipboard, no writefile"
+    else
+        label.Text = "done · no clipboard/writefile — use console"
+        print(full)
+    end
+end
+
 dump()
