@@ -1,83 +1,106 @@
--- LocalScript (executor) — Tool & Remote Dumper
--- Scans StarterPack, Backpack, and PlayerGui for scripts that fire remotes.
--- Copies to clipboard.
+-- LocalScript (executor) — TBSOBR Boss Melter
+-- Finds the boss, extracts its position, and spams the Gaster Blaster remote.
+-- Bypasses cooldowns and normal targeting.
 
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
+-- GUI
 local gui = Instance.new("ScreenGui")
-gui.Name = "OllieToolDump"
+gui.Name = "TBSOBR_Melter"
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 2147483647
 gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
-local label = Instance.new("TextLabel")
-label.Size = UDim2.new(0.9, 0, 0.15, 0)
-label.Position = UDim2.new(0.05, 0, 0.05, 0)
-label.BackgroundColor3 = Color3.fromRGB(18, 16, 26)
-label.Text = "Scanning Tools & PlayerGui..."
-label.TextColor3 = Color3.fromRGB(255, 100, 100)
-label.Font = Enum.Font.GothamBold
-label.TextSize = 14
-label.TextWrapped = true
-label.Parent = gui
-Instance.new("UICorner", label).CornerRadius = UDim.new(0, 8)
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 200, 0, 100)
+frame.Position = UDim2.new(0, 20, 0, 20)
+frame.BackgroundColor3 = Color3.fromRGB(18, 16, 26)
+frame.Active = true
+frame.Draggable = true
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 
-task.wait(1)
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 30)
+title.BackgroundTransparency = 1
+title.Text = "ollie · Boss Melter"
+title.TextColor3 = Color3.fromRGB(255, 100, 100)
+title.Font = Enum.Font.GothamBold
+title.Parent = frame
 
-local results = {}
-local count = 0
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1, -20, 0, 40)
+status.Position = UDim2.new(0, 10, 0, 40)
+status.BackgroundTransparency = 1
+status.Text = "Looking for boss..."
+status.TextColor3 = Color3.fromRGB(235, 230, 255)
+status.Font = Enum.Font.Gotham
+status.TextSize = 12
+status.TextWrapped = true
+status.Parent = frame
 
-local function getPath(obj)
-    local parts = {}
-    local cur = obj
-    while cur and cur ~= game do
-        table.insert(parts, 1, cur.Name)
-        cur = cur.Parent
-    end
-    return "game." .. table.concat(parts, ".")
-end
-
-local function scan(obj)
-    for _, d in ipairs(obj:GetDescendants()) do
-        if d:IsA("LocalScript") or d:IsA("Script") then
-            local path = getPath(d)
-            local src = nil
-            if decompile then
-                local ok, dec = pcall(decompile, d)
-                if ok and dec then src = dec end
-            end
-            if not src then
-                local ok, raw = pcall(function() return d.Source end)
-                if ok and raw and #raw > 0 then src = raw end
-            end
-            
-            if src and (src:find("FireServer") or src:find("InvokeServer")) then
-                count = count + 1
-                label.Text = "Found remote: " .. d.Name
-                task.wait(0.1)
-                table.insert(results, string.format("-- [%s] %s\n%s\n", d.ClassName, path, src))
+-- 1. Find the boss
+local function getBoss()
+    for _, v in ipairs(workspace:GetChildren()) do
+        if v:IsA("Model") and (v:FindFirstChild("Humanoid") or v:FindFirstChild("Zombie")) then
+            -- skip players and self
+            if not Players:GetPlayerFromCharacter(v) and v ~= LocalPlayer.Character then
+                -- check if it has HP left (sometimes bosses hide it in a Value object)
+                local hum = v:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    return v, hum
+                end
+                -- custom health
+                local zombie = v:FindFirstChild("Zombie")
+                if zombie and zombie:FindFirstChild("TrueHp") and zombie.TrueHp.Value > 0 then
+                    return v, zombie
+                end
             end
         end
     end
+    return nil, nil
 end
 
--- scan tools and gui
-if LocalPlayer:FindFirstChild("Backpack") then scan(LocalPlayer.Backpack) end
-if LocalPlayer:FindFirstChild("PlayerGui") then scan(LocalPlayer.PlayerGui) end
-if game:GetService("StarterPack") then scan(game:GetService("StarterPack")) end
-
-label.Text = "Done! Found " .. count .. " scripts."
-task.wait(1)
-
-local fullText = table.concat(results, "\n")
-if #fullText > 150000 then
-    fullText = fullText:sub(1, 150000) .. "\n-- TRUNCATED"
+-- 2. Get the remote
+local function getRemote()
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local char = LocalPlayer.Character
+    local tool = nil
+    
+    if backpack then tool = backpack:FindFirstChild("Gaster Blaster") end
+    if not tool and char then tool = char:FindFirstChild("Gaster Blaster") end
+    
+    if tool then
+        return tool:FindFirstChild("RemoteEvent") or tool:FindFirstChild("RemoteEvent2")
+    end
+    return nil
 end
 
-if setclipboard then
-    pcall(setclipboard, fullText)
-    label.Text = "Copied " .. count .. " scripts!\nPaste in chat."
-else
-    label.Text = "No clipboard."
-end
+-- 3. Spam the remote
+task.spawn(function()
+    while task.wait(0.1) do -- yield so game doesn't crash
+        local boss, hum = getBoss()
+        if boss and hum then
+            local hrp = boss:FindFirstChild("HumanoidRootPart") or boss:FindFirstChild("Torso")
+            if hrp then
+                local remote = getRemote()
+                if remote then
+                    status.Text = "Melting " .. boss.Name .. "..."
+                    
+                    -- Fire the remote 10 times per tick at the boss's position
+                    for i = 1, 10 do
+                        pcall(function()
+                            remote:FireServer(hrp.Position.X, hrp.Position.Y, hrp.Position.Z)
+                        end)
+                    end
+                else
+                    status.Text = "Gaster Blaster not in Backpack!"
+                end
+            end
+        else
+            status.Text = "No boss found."
+        end
+    end
+end)
