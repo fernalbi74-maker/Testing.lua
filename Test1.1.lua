@@ -1,17 +1,16 @@
--- LocalScript (executor) — decompile EVERY script using getscripts()
--- Writes line by line to decompiled_all.txt so it never OOMs.
--- Relies on executor decompile() since it works on your Mod Menu.
+-- LocalScript (executor) — decompile to clipboard
+-- Grabs game scripts, decompiles via Mod Menu's built-in decompile(),
+-- copies to clipboard in chunks so mobile doesn't OOM.
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
-local filename = "TBSOBR_ALL_SCRIPTS.txt"
 
 -- GUI
 local ACCENT = Color3.fromRGB(140, 100, 255)
 local BG = Color3.fromRGB(18, 16, 26)
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "OllieDecompiler"
+gui.Name = "OllieClipDecomp"
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 2147483647
 gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
@@ -28,7 +27,7 @@ local status = Instance.new("TextLabel")
 status.Size = UDim2.new(1, -20, 1, -20)
 status.Position = UDim2.new(0, 10, 0, 10)
 status.BackgroundTransparency = 1
-status.Text = "Waiting..."
+status.Text = "Decompiling and copying..."
 status.TextColor3 = ACCENT
 status.Font = Enum.Font.GothamBold
 status.TextSize = 14
@@ -47,57 +46,62 @@ local function getPath(obj)
     return "game." .. table.concat(parts, ".")
 end
 
--- initialize file
-pcall(function()
-    writefile(filename, "-- TBSOBR ALL SCRIPTS\n\n")
-end)
-
-status.Text = "Grabbing scripts via getscripts()..."
-task.wait(0.5)
-
 local scripts = {}
 if getscripts then
     scripts = getscripts()
 else
-    -- fallback if executor is weird
-    for _, d in ipairs(game:GetDescendants()) do
+    for _, d in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
         if d:IsA("LuaSourceContainer") then table.insert(scripts, d) end
     end
 end
 
-status.Text = "Found " .. #scripts .. " scripts. Decompiling..."
+local results = {}
+local count = 0
 
 for i, scr in ipairs(scripts) do
-    if i % 5 == 0 then
-        status.Text = string.format("Decompiling %d / %d...\n%s", i, #scripts, scr.Name)
-        task.wait(0.1)
-    end
-    
     local path = getPath(scr)
-    local src = nil
     
-    -- skip core noise
+    -- ONLY game scripts. skip core garbage.
     if not path:find("PlayerModule") and not path:find("HDAdmin") and not path:find("RbxCharacterSounds") then
-        -- try decompile() first (works on Mod Menu)
+        count = count + 1
+        status.Text = "Decompiling " .. count .. "... " .. scr.Name
+        task.wait(0.05)
+        
+        local src = nil
         if decompile then
             local ok, dec = pcall(decompile, scr)
             if ok and dec then src = dec end
         end
-        
-        -- fallback to Source
         if not src then
             local ok, raw = pcall(function() return scr.Source end)
             if ok and raw and #raw > 0 then src = raw end
         end
         
-        -- write to file
         if src then
-            local text = string.format("-- ═══════════════════════════════\n-- SCRIPT: %s\n-- CLASS: %s\n-- PATH: %s\n-- ═══════════════════════════════\n\n%s\n\n", scr.Name, scr.ClassName, path, src)
-            pcall(appendfile, filename, text)
+            table.insert(results, string.format("-- [%s] %s\n%s\n", scr.ClassName, path, src))
         else
-            pcall(appendfile, filename, string.format("-- [FAILED] %s (%s)\n\n", path, scr.ClassName))
+            table.insert(results, string.format("-- [%s] %s\n-- (decompile failed)\n", scr.ClassName, path))
         end
     end
 end
 
-status.Text = "Done! Saved to Workspace/" .. filename
+status.Text = "Copying to clipboard..."
+task.wait(0.5)
+
+local fullText = table.concat(results, "\n")
+
+-- mobile OOM protection: cap at 150KB
+if #fullText > 150000 then
+    fullText = fullText:sub(1, 150000) .. "\n\n-- [TRUNCATED TO PREVENT CRASH] --"
+end
+
+if setclipboard then
+    local ok, err = pcall(setclipboard, fullText)
+    if ok then
+        status.Text = "DONE! " .. count .. " scripts copied.\nPaste here."
+    else
+        status.Text = "clipboard crash: " .. tostring(err)
+    end
+else
+    status.Text = "no setclipboard!"
+end
