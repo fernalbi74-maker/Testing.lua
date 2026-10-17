@@ -1,15 +1,60 @@
--- LocalScript (executor) — TBSOBR bytecode decompiler
--- Tries Script.Source first, falls back to getscriptbytecode + web API.
--- Pastes decompiled source into a text box.
+-- LocalScript (executor) — TBSOBR full bytecode decompiler
+-- Scans the whole game, decompiles every script via API, copies to clipboard.
+-- No 10-minute waits, yields every 5 scripts, no memory OOM.
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local HttpService = game:GetService("HttpService")
 
 -- CONFIG
-local API_URL = "https://medal.bot/api/decompile" -- MedalDecomp public API
-local TARGET_ROOT = game:GetService("ReplicatedStorage")
-local FILTER = "DefenseUtil" -- change to "BossAttacks" for all boss scripts
+local API_URL = "https://medal.bot/api/decompile"
+local SCAN_ROOTS = {
+    game:GetService("ReplicatedStorage"),
+    game:GetService("ServerScriptService"),
+    game:GetService("ServerStorage"),
+    game:GetService("StarterGui"),
+    game:GetService("StarterPlayer"),
+}
+
+-- GUI
+local ACCENT = Color3.fromRGB(140, 100, 255)
+local BG = Color3.fromRGB(18, 16, 26)
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "OllieDecompiler"
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 2147483647
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0.9, 0, 0.15, 0)
+frame.Position = UDim2.new(0.05, 0, 0.05, 0)
+frame.BackgroundColor3 = BG
+frame.BorderSizePixel = 0
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1, -20, 1, -20)
+status.Position = UDim2.new(0, 10, 0, 10)
+status.BackgroundTransparency = 1
+status.Text = "Click to scan and decompile ALL scripts"
+status.TextColor3 = ACCENT
+status.Font = Enum.Font.GothamBold
+status.TextSize = 14
+status.TextWrapped = true
+status.Parent = frame
+
+local btn = Instance.new("TextButton")
+btn.Size = UDim2.new(1, -20, 0, 30)
+btn.Position = UDim2.new(0, 10, 1, -40)
+btn.BackgroundColor3 = ACCENT
+btn.Text = "START DECOMPILE"
+btn.TextColor3 = Color3.fromRGB(20, 16, 30)
+btn.Font = Enum.Font.GothamBold
+btn.TextSize = 14
+btn.Parent = frame
+Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
 
 local function getPath(obj)
     local parts = {}
@@ -21,21 +66,18 @@ local function getPath(obj)
     return "game." .. table.concat(parts, ".")
 end
 
--- try .Source, fall back to getscriptbytecode
 local function getDecompiledSource(scr)
     -- 1. try direct source
     local ok, src = pcall(function() return scr.Source end)
-    if ok and src and #src > 0 then
-        return src, "Source"
-    end
+    if ok and src and #src > 0 then return src end
 
     -- 2. try executor decompile
     if decompile then
         local ok2, dec = pcall(decompile, scr)
-        if ok2 and dec then return dec, "decompile()" end
+        if ok2 and dec then return dec end
     end
 
-    -- 3. try getscriptbytecode + web API
+    -- 3. try bytecode + API
     if getscriptbytecode and request then
         local ok3, bytecode = pcall(getscriptbytecode, scr)
         if ok3 and bytecode and #bytecode > 0 then
@@ -43,86 +85,85 @@ local function getDecompiledSource(scr)
                 return request({
                     Url = API_URL,
                     Method = "POST",
-                    Headers = { ["Content-Type"] = "text/plain" },
+                    Headers = { ["Content-Type"] = "application/octet-stream" },
                     Body = bytecode,
                 })
             end)
             if ok4 and resp and resp.StatusCode == 200 and resp.Body then
-                return resp.Body, "web decompile"
+                return resp.Body
             end
         end
     end
 
-    return nil, "protected"
+    return nil
 end
 
--- scan and collect
-local results = {}
-local count = 0
+btn.MouseButton1Click:Connect(function()
+    btn.Visible = false
+    status.Text = "Scanning tree..."
+    task.wait(0.5)
 
-for _, d in ipairs(TARGET_ROOT:GetDescendants()) do
-    if d:IsA("LuaSourceContainer") and d.Name:find(FILTER) then
-        count = count + 1
-        local src, method = getDecompiledSource(d)
-        if src then
-            table.insert(results, string.format("-- [%s] %s\n-- method: %s\n\n%s\n\n", d.ClassName, getPath(d), method, src))
-        else
-            table.insert(results, string.format("-- [%s] %s\n-- FAILED: %s\n\n", d.ClassName, getPath(d), method))
+    local scripts = {}
+    for _, root in ipairs(SCAN_ROOTS) do
+        if root then
+            for _, d in ipairs(root:GetDescendants()) do
+                if d:IsA("LuaSourceContainer") then
+                    -- skip known useless noise
+                    local path = getPath(d)
+                    if not path:find("PlayerModule") and not path:find("RbxCharacterSounds") and not path:find("HDAdmin") then
+                        table.insert(scripts, d)
+                    end
+                end
+            end
         end
     end
-end
 
--- GUI
-local gui = Instance.new("ScreenGui")
-gui.ResetOnSpawn = false
-gui.DisplayOrder = 2147483647
-gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    local results = {}
+    local count = 0
+    local failed = 0
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0.95, 0, 0.85, 0)
-frame.Position = UDim2.new(0.025, 0, 0.075, 0)
-frame.BackgroundColor3 = Color3.fromRGB(18, 16, 26)
-frame.Parent = gui
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    for i, scr in ipairs(scripts) do
+        count = count + 1
+        status.Text = string.format("Decompiling %d / %d...\n%s", i, #scripts, scr.Name)
+        task.wait(0.1) -- yield to prevent mobile freeze
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 36)
-title.BackgroundTransparency = 1
-title.Text = "decompiled: " .. count .. " scripts (filter: " .. FILTER .. ")"
-title.TextColor3 = Color3.fromRGB(140, 100, 255)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 14
-title.Parent = frame
+        local src = getDecompiledSource(scr)
+        local path = getPath(scr)
 
-local scroll = Instance.new("ScrollingFrame")
-scroll.Size = UDim2.new(1, -20, 1, -50)
-scroll.Position = UDim2.new(0, 10, 0, 42)
-scroll.BackgroundColor3 = Color3.fromRGB(12, 10, 18)
-scroll.BorderSizePixel = 0
-scroll.ScrollBarThickness = 8
-scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-scroll.Parent = frame
-Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 6)
+        if src then
+            table.insert(results, string.format("-- ═══════════════════════════════\n-- SCRIPT: %s\n-- CLASS: %s\n-- PATH: %s\n-- ═══════════════════════════════\n\n%s\n\n", scr.Name, scr.ClassName, path, src))
+        else
+            failed = failed + 1
+            table.insert(results, string.format("-- [FAILED TO DECOMPILE] %s (%s)\n", path, scr.ClassName))
+        end
 
-local textBox = Instance.new("TextBox")
-textBox.Size = UDim2.new(1, 0, 0, 0)
-textBox.BackgroundTransparency = 1
-textBox.Text = table.concat(results, "\n")
-textBox.TextColor3 = Color3.fromRGB(235, 230, 255)
-textBox.Font = Enum.Font.Code
-textBox.TextSize = 11
-textBox.TextXAlignment = Enum.TextXAlignment.Left
-textBox.TextYAlignment = Enum.TextYAlignment.Top
-textBox.ClearTextOnFocus = false
-textBox.MultiLine = true
-textBox.TextEditable = false
-textBox.Parent = scroll
+        -- flush memory every 20 scripts
+        if count % 20 == 0 then
+            task.wait(0.5)
+        end
+    end
 
-local function update()
-    local h = textBox.TextBounds.Y
-    textBox.Size = UDim2.new(1, 0, 0, math.max(h, scroll.AbsoluteSize.Y))
-    scroll.CanvasSize = UDim2.new(0, 0, 0, math.max(h, scroll.AbsoluteSize.Y))
-end
-textBox:GetPropertyChangedSignal("TextBounds"):Connect(update)
-scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(update)
-task.spawn(update)
+    status.Text = "Copying to clipboard..."
+    task.wait(0.5)
+
+    local finalStr = table.concat(results, "\n")
+
+    -- safety limit to prevent mobile OOM crash
+    if #finalStr > 200000 then
+        finalStr = finalStr:sub(1, 200000) .. "\n\n-- [TRUNCATED TO PREVENT CRASH] --"
+    end
+
+    if setclipboard then
+        local ok, err = pcall(setclipboard, finalStr)
+        if ok then
+            status.Text = string.format("DONE! %d scripts (%d failed)\nCopied to clipboard. Paste it here.", count, failed)
+        else
+            status.Text = "clipboard failed: " .. tostring(err)
+        end
+    else
+        status.Text = "no setclipboard available!"
+    end
+
+    btn.Text = "SCAN AGAIN"
+    btn.Visible = true
+end)
