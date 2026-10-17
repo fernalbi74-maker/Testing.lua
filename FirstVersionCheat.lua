@@ -1,47 +1,38 @@
--- GGE COMBAT ADVANCED EXPLOITER V2
+-- GGE ALL-IN-ONE COMBINE v1.0
+-- Максимальный функционал без необходимости в логах и сканировании
+
+local Player = game.Players.LocalPlayer
+local RunService = game:GetService("RunService")
 local AttackFolder = game.Lighting:FindFirstChild("AttackTools")
-if not AttackFolder then 
-    -- Создаем временный лейбл для ошибки, если папка не найдена
-    local ErrorGui = Instance.new("ScreenGui", game.CoreGui)
-    local ErrorLbl = Instance.new("TextLabel", ErrorGui)
-    ErrorLbl.Size = UDim2.new(0, 400, 0, 50)
-    ErrorLbl.Position = UDim2.new(0.5, -200, 0.1, 0)
-    ErrorLbl.Text = "CRITICAL ERROR: AttackTools folder not found!"
-    ErrorLbl.TextColor3 = Color3.fromRGB(255, 0, 0)
-    ErrorLbl.BackgroundTransparency = 1
-    return 
-end
 
--- UI SETUP
+-- Настройки
+local Settings = {
+    AttackRange = 100,
+    HitboxSize = 30,
+    DamageValue = 999999,
+    DefenseValue = 95
+}
+
+-- Создание компактного UI (Маленькая кнопка в углу)
 local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
+local MainBtn = Instance.new("TextButton", ScreenGui)
+MainBtn.Size = UDim2.new(0, 60, 0, 30)
+MainBtn.Position = UDim2.new(0, 10, 0, 10) -- Верхний левый угол
+MainBtn.Text = "OFF"
+MainBtn.BackgroundColor3 = Color3.fromRGB(50, 0, 0)
+MainBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MainBtn.TextSize = 14
+MainBtn.Draggable = true -- Можно перетащить, если мешает
 
--- Текстовое поле для уведомлений (вместо консоли)
-local StatusLabel = Instance.new("TextLabel", ScreenGui)
-StatusLabel.Size = UDim2.new(0, 400, 0, 30)
-StatusLabel.Position = UDim2.new(0.5, -200, 0.1, 0) -- В верхней части экрана
-StatusLabel.Text = "Status: Ready"
-StatusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-StatusLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-StatusLabel.BackgroundTransparency = 0.5
-StatusLabel.TextSize = 18
+local Active = false
 
--- Кнопка активации (перемещена вверх)
-local Btn = Instance.new("TextButton", ScreenGui)
-Btn.Size = UDim2.new(0, 200, 0, 50)
-Btn.Position = UDim2.new(0.5, -100, 0.2, 0) -- Поднята выше (Y = 0.2)
-Btn.Text = "EXECUTE EXPLOIT"
-Btn.BackgroundColor3 = Color3.fromRGB(120, 0, 0)
-Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-Btn.Font = Enum.Font.SourceSansBold
-Btn.TextSize = 20
-
--- LOGIC
-local function GetClosestPlayer()
+-- Функция поиска ближайшей цели
+local function GetTarget()
     local closest = nil
-    local dist = 100
+    local dist = Settings.AttackRange
     for _, p in pairs(game.Players:GetPlayers()) do
-        if p ~= game.Players.LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-            local d = (game.Players.LocalPlayer.Character.HumanoidRootPart.Position - p.Character.HumanoidRootPart.Position).Magnitude
+        if p ~= Player and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            local d = (Player.Character.HumanoidRootPart.Position - p.Character.HumanoidRootPart.Position).Magnitude
             if d < dist then
                 dist = d
                 closest = p.Character
@@ -51,39 +42,51 @@ local function GetClosestPlayer()
     return closest
 end
 
-local function ExecuteAttack()
-    local target = GetClosestPlayer()
-    if not target then 
-        StatusLabel.Text = "Status: No target nearby!" 
-        StatusLabel.TextColor3 = Color3.fromRGB(255, 165, 0)
-        return 
-    end
+-- Основной цикл чита
+RunService.Heartbeat:Connect(function()
+    if not Active then return end
     
-    local targetHRP = target:FindFirstChild("HumanoidRootPart")
-    local targetHum = target:FindFirstChild("Humanoid")
-    if not targetHRP or not targetHum then return end
-
-    StatusLabel.Text = "Status: Attacking " .. target.Name .. "..."
-    StatusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-
-    for _, remote in pairs(AttackFolder:GetDescendants()) do
-        if remote:IsA("RemoteEvent") then
-            pcall(function()
-                remote:FireServer(target) 
-                remote:FireServer(targetHum)
-                remote:FireServer(targetHRP.Position)
-                remote:FireServer({["Damage"] = 999999, ["Target"] = target})
-                remote:FireServer(targetHRP)
-            end)
+    local target = GetTarget()
+    local char = Player.Character
+    
+    -- 1. Попытка ударить всех найденными ремотами
+    if target and AttackFolder then
+        for _, remote in pairs(AttackFolder:GetDescendants()) do
+            if remote:IsA("RemoteEvent") then
+                pcall(function()
+                    -- Пробуем 3 самых частых формата аргументов
+                    remote:FireServer(target, Settings.DamageValue)
+                    remote:FireServer(target, target.HumanoidRootPart.Position, Settings.DamageValue)
+                    remote:FireServer(Settings.DamageValue, target)
+                end)
+            end
         end
     end
-end
-
-Btn.MouseButton1Click:Connect(function()
-    -- Цикл спама для обхода серверных кулдаунов
-    for i = 1, 15 do 
-        ExecuteAttack()
-        task.wait(0.05) 
+    
+    -- 2. Расширение хитбоксов (на основе HitboxUtil)
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.CollisionGroup == "PlrAttacks" then
+            obj.Size = Vector3.new(Settings.HitboxSize, Settings.HitboxSize, Settings.HitboxSize)
+            obj.CanCollide = false
+        end
     end
-    StatusLabel.Text = "Status: Attack Sequence Finished"
+    
+    -- 3. Спам атрибутами защиты/урона (на основе DefenseUtil)
+    if char then
+        char:SetAttribute("BaseDefense", Settings.DefenseValue)
+        char:SetAttribute("VerityDamageBuff", Settings.DamageValue)
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum:SetAttribute("BaseDefense", Settings.DefenseValue)
+        end
+    end
 end)
+
+-- Переключатель
+MainBtn.MouseButton1Click:Connect(function()
+    Active = not Active
+    MainBtn.Text = Active and "ON" or "OFF"
+    MainBtn.BackgroundColor3 = Active and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(150, 0, 0)
+end)
+
+print("GGE Combine Loaded. Click the small button to toggle.")
