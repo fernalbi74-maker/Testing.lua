@@ -1,93 +1,52 @@
--- GGE STABILIZED COMBINE v2.0
--- Исправлен баг с поломкой карты и оптимизирована атака
+-- GGE LOGIC HUNTER v1.0
+-- Ищет только боевые скрипты, чтобы не лагало
 
-local Player = game.Players.LocalPlayer
-local RunService = game:GetService("RunService")
-local AttackFolder = game.Lighting:FindFirstChild("AttackTools")
+local Keywords = {"Damage", "Attack", "FireServer", "RemoteEvent", "Hit", "Combat"}
+local FoundScripts = {}
 
--- Настройки
-local Settings = {
-    AttackRange = 100,
-    HitboxSize = 15, -- Уменьшено для стабильности (карта больше не сломается)
-    DamageValue = 999999,
-    DefenseValue = 95
-}
-
--- Компактный UI
 local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
-local MainBtn = Instance.new("TextButton", ScreenGui)
-MainBtn.Size = UDim2.new(0, 60, 0, 30)
-MainBtn.Position = UDim2.new(0, 10, 0, 10)
-MainBtn.Text = "OFF"
-MainBtn.BackgroundColor3 = Color3.fromRGB(50, 0, 0)
-MainBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-MainBtn.Draggable = true
+local Frame = Instance.new("ScrollingFrame", ScreenGui)
+Frame.Size = UDim2.new(0, 300, 0, 400)
+Frame.Position = UDim2.new(0, 10, 0, 50)
+Frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+Frame.CanvasSize = UDim2.new(0, 0, 10, 0)
 
-local Active = false
+local UIList = Instance.new("UIListLayout", Frame)
 
--- Поиск цели (включая боссов)
-local function GetTarget()
-    local closest = nil
-    local dist = Settings.AttackRange
-    for _, obj in pairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") and obj ~= Player.Character then
-            local root = obj:FindFirstChild("HumanoidRootPart")
-            if root then
-                local d = (Player.Character.HumanoidRootPart.Position - root.Position).Magnitude
-                if d < dist then
-                    dist = d
-                    closest = obj
-                end
-            end
-        end
-    end
-    return closest
+local function AddToLog(text)
+    local label = Instance.new("TextLabel", Frame)
+    label.Size = UDim2.new(1, 0, 0, 25)
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    label.TextSize = 12
+    label.TextXAlignment = Enum.TextXAlignment.Left
 end
 
-RunService.Heartbeat:Connect(function()
-    if not Active then return end
-    
-    local target = GetTarget()
-    local char = Player.Character
-    
-    -- 1. ТОЧНАЯ АТАКА (Без перегрузки сервера)
-    if target and AttackFolder then
-        for _, remote in pairs(AttackFolder:GetDescendants()) do
-            if remote:IsA("RemoteEvent") then
-                -- Отправляем сигнал только раз в несколько кадров, чтобы не кикнуло
-                if math.random(1, 10) == 1 then 
-                    pcall(function()
-                        remote:FireServer(target, Settings.DamageValue)
-                    end)
+local function ScanZone(zone)
+    for _, obj in pairs(zone:GetDescendants()) do
+        if obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
+            -- Мы не можем читать .Source напрямую, но мы можем проверить имя 
+            -- и попробовать найти упоминания в именах или путях
+            local name = obj.Name:lower()
+            for _, word in pairs(Keywords) do
+                if name:find(word:lower()) then
+                    table.insert(FoundScripts, obj)
+                    AddToLog("FOUND: " .. obj:GetFullName())
+                    break
                 end
             end
         end
     end
-    
-    -- 2. СТАБИЛЬНЫЙ ХИТБОКС (Исправлено: больше не ломает карту)
-    for _, obj in pairs(workspace:GetDescendants()) do
-        if obj:IsA("BasePart") and obj.CollisionGroup == "PlrAttacks" then
-            -- ГЛАВНОЕ ИСПРАВЛЕНИЕ: Не трогаем закрепленные детали!
-            if not obj.Anchored then 
-                obj.Size = Vector3.new(Settings.HitboxSize, Settings.HitboxSize, Settings.HitboxSize)
-                obj.CanCollide = false
-                obj.Transparency = 0.7
-            end
-        end
-    end
-    
-    -- 3. ЗАЩИТА
-    if char then
-        char:SetAttribute("BaseDefense", Settings.DefenseValue)
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then hum:SetAttribute("BaseDefense", Settings.DefenseValue) end
-    end
-end)
+end
 
-MainBtn.MouseButton1Click:Connect(function()
-    Active = not Active
-    MainBtn.Text = Active and "ON" or "OFF"
-    MainBtn.BackgroundColor3 = Active and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(150, 0, 0)
-end)
+-- Сканируем только важные зоны
+print("Hunting for combat logic...")
+ScanZone(game.ReplicatedStorage)
+ScanZone(game.StarterPlayer.StarterPlayerScripts)
+ScanZone(game.StarterPlayer.StarterCharacterScripts)
+ScanZone(game.Players.LocalPlayer.PlayerGui)
+ScanZone(game.Players.LocalPlayer.Backpack)
 
-print("GGE Stabilized Loaded. Map physics fixed!")
+AddToLog("--- SCAN COMPLETE ---")
+print("Logic Hunter finished. Check the list!")
