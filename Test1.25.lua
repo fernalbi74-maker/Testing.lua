@@ -1,9 +1,8 @@
--- LocalScript (executor) — In-game dump viewer
--- Shows the dump in a textbox and gives a button to save it.
+-- LocalScript (executor) — Direct memory dump viewer
+-- Dumps scripts straight into the GUI textbox, no files needed.
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
-local filename = "TBSOBR_FULL_DUMP.txt"
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "TBSOBR_Viewer"
@@ -23,7 +22,7 @@ Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 36)
 title.BackgroundTransparency = 1
-title.Text = "TBSOBR Dump Viewer"
+title.Text = "Dumping to memory..."
 title.TextColor3 = Color3.fromRGB(140, 100, 255)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -50,7 +49,7 @@ textBox.TextYAlignment = Enum.TextYAlignment.Top
 textBox.ClearTextOnFocus = false
 textBox.MultiLine = true
 textBox.TextEditable = false
-textBox.Text = "Loading..."
+textBox.Text = ""
 textBox.Parent = scroll
 
 local btnFrame = Instance.new("Frame")
@@ -59,74 +58,91 @@ btnFrame.Position = UDim2.new(0, 10, 1, -50)
 btnFrame.BackgroundTransparency = 1
 btnFrame.Parent = frame
 
-local saveBtn = Instance.new("TextButton")
-saveBtn.Size = UDim2.new(0.5, -10, 1, 0)
-saveBtn.Position = UDim2.new(0, 0, 0, 0)
-saveBtn.BackgroundColor3 = Color3.fromRGB(140, 100, 255)
-saveBtn.Text = "Save File"
-saveBtn.TextColor3 = Color3.fromRGB(20, 16, 30)
-saveBtn.Font = Enum.Font.GothamBold
-saveBtn.Parent = btnFrame
-Instance.new("UICorner", saveBtn).CornerRadius = UDim.new(0, 6)
-
 local copyBtn = Instance.new("TextButton")
-copyBtn.Size = UDim2.new(0.5, -10, 1, 0)
-copyBtn.Position = UDim2.new(0.5, 10, 0, 0)
-copyBtn.BackgroundColor3 = Color3.fromRGB(32, 28, 46)
-copyBtn.Text = "Copy All"
-copyBtn.TextColor3 = Color3.fromRGB(235, 230, 255)
+copyBtn.Size = UDim2.new(1, 0, 1, 0)
+copyBtn.Position = UDim2.new(0, 0, 0, 0)
+copyBtn.BackgroundColor3 = Color3.fromRGB(140, 100, 255)
+copyBtn.Text = "Copy All (First 150KB)"
+copyBtn.TextColor3 = Color3.fromRGB(20, 16, 30)
 copyBtn.Font = Enum.Font.GothamBold
 copyBtn.Parent = btnFrame
 Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 6)
 
-task.wait(1)
+task.wait(0.5)
 
-local success, content = pcall(function()
-    return readfile(filename)
-end)
-
-if not success or not content then
-    textBox.Text = "Could not read " .. filename .. "\nRun the dumper first."
-    saveBtn.Visible = false
-    copyBtn.Visible = false
-    return
+local function getPath(obj)
+    local parts = {}
+    local cur = obj
+    while cur and cur ~= game do
+        table.insert(parts, 1, cur.Name)
+        cur = cur.Parent
+    end
+    return "game." .. table.concat(parts, ".")
 end
 
--- Mobile safe: truncate to 200KB so the textbox doesn't crash
-local displayContent = content
-if #displayContent > 200000 then
-    displayContent = displayContent:sub(1, 200000) .. "\n\n-- [TRUNCATED TO PREVENT LAG. SAVE FILE FOR FULL VERSION] --"
+local out = {}
+table.insert(out, "-- TBSOBR GLOBAL DUMP\n")
+
+local count = 0
+for _, d in ipairs(game:GetDescendants()) do
+    local path = getPath(d)
+    if not path:find("PlayerModule") and not path:find("HDAdmin") and not path:find("RbxCharacterSounds") then
+        if d:IsA("LocalScript") or d:IsA("ModuleScript") then
+            count = count + 1
+            if count % 50 == 0 then
+                title.Text = "Dumping... " .. count
+                task.wait(0.05) -- yield so UI doesn't freeze
+            end
+            
+            local src = nil
+            local ok, raw = pcall(function() return d.Source end)
+            if ok and raw and #raw > 0 then src = raw end
+            if not src and decompile then
+                local ok2, dec = pcall(decompile, d)
+                if ok2 and dec then src = dec end
+            end
+            
+            if src then
+                table.insert(out, string.format("-- [%s] %s\n%s\n", d.ClassName, path, src))
+            else
+                table.insert(out, string.format("-- [%s] %s (failed)\n", d.ClassName, path))
+            end
+        elseif d:IsA("Script") then
+            table.insert(out, string.format("-- [Script] %s\n", path))
+        end
+    end
 end
 
-textBox.Text = displayContent
+title.Text = "Dumped " .. count .. " scripts."
+task.wait(0.5)
+
+local fullStr = table.concat(out, "\n")
+
+-- Render in textbox (cap at 200KB so mobile doesn't crash)
+local displayStr = fullStr
+if #displayStr > 200000 then
+    displayStr = displayStr:sub(1, 200000) .. "\n\n-- [TRUNCATED AT 200KB -- COPY TO GET THIS PART] --"
+end
+
+textBox.Text = displayStr
 
 local function updateCanvas()
     textBox.Size = UDim2.new(1, 0, 0, math.max(textBox.TextBounds.Y, scroll.AbsoluteSize.Y))
     scroll.CanvasSize = UDim2.new(0, 0, 0, math.max(textBox.TextBounds.Y, scroll.AbsoluteSize.Y))
 end
-
 textBox:GetPropertyChangedSignal("TextBounds"):Connect(updateCanvas)
-scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateCanvas)
 task.spawn(updateCanvas)
-
-saveBtn.MouseButton1Click:Connect(function()
-    local success = pcall(function()
-        writefile("TBSOBR_DUMP_EXPORT.txt", content)
-    end)
-    if success then
-        saveBtn.Text = "Saved to Workspace!"
-    else
-        saveBtn.Text = "Save failed."
-    end
-end)
 
 copyBtn.MouseButton1Click:Connect(function()
     if setclipboard then
-        local success = pcall(setclipboard, displayContent)
+        -- cap clipboard at 150KB to prevent OOM
+        local copyStr = fullStr
+        if #copyStr > 150000 then copyStr = copyStr:sub(1, 150000) .. "\n-- TRUNCATED" end
+        local success = pcall(setclipboard, copyStr)
         if success then
-            copyBtn.Text = "Copied!"
+            copyBtn.Text = "Copied! Paste in chat."
         else
-            copyBtn.Text = "Too big to copy."
+            copyBtn.Text = "Clipboard failed."
         end
     end
 end)
