@@ -1,13 +1,11 @@
--- LocalScript (executor) — Fake GamePass Purchase
--- Fires PromptGamePassPurchaseFinished locally with wasPurchased = true.
--- Only works if the game's LocalScripts trust this event.
+-- LocalScript (executor) — Time and Coin Manipulator
+-- Tries to force the server time to 0 and set coins.
 
-local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "TBSOBR_GamePassSpoof"
+gui.Name = "TBSOBR_TimeHack"
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 2147483647
 gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
@@ -24,28 +22,35 @@ Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 local btn = Instance.new("TextButton")
 btn.Size = UDim2.new(1, -20, 0, 40)
 btn.Position = UDim2.new(0, 10, 0, 30)
-btn.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
-btn.Text = "Fake GamePass Purchase"
+btn.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
+btn.Text = "Break Server Time"
 btn.TextColor3 = Color3.fromRGB(20, 16, 30)
 btn.Font = Enum.Font.GothamBold
 btn.Parent = frame
 Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
 
 btn.MouseButton1Click:Connect(function()
-    -- Try common TBSOBR gamepass IDs or just spam event
-    local passIds = {1999028481, 2005748682, 2006630649} -- from LocalDailyRewards dump
-    
-    for _, id in ipairs(passIds) do
-        pcall(function()
-            -- This fires the event that LocalScripts listen to
-            MarketplaceService:SignalPromptGamePassPurchaseFinished(LocalPlayer, id, true)
-        end)
-        
-        -- Some executors have this alternative
-        pcall(function()
-            firegamepasspurchase(id, true)
-        end)
+    -- Spam server time to 0
+    task.spawn(function()
+        while true do
+            task.wait(0.1)
+            local values = workspace:FindFirstChild("Values")
+            if values and values:FindFirstChild("ServerTime") then
+                pcall(function()
+                    values.ServerTime.Value = 0
+                end)
+            end
+        end
+    end)
+
+    -- Try to set coins locally
+    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+    if leaderstats then
+        local coins = leaderstats:FindFirstChild("Coins")
+        if coins then
+            pcall(function()
+                coins.Value = 999999999
+            end)
+        end
     end
-    
-    btn.Text = "Fired! Check if VIP works."
 end)
