@@ -1,97 +1,103 @@
--- LocalScript (executor) — Destroy Boss Zombie & Spoof Health
--- Nukes the Zombie folder and sets all numbers to 0.
+-- LocalScript (executor) — Global Client Dump
+-- Dumps every readable LocalScript and ModuleScript directly to a file.
+-- No clipboard limits, no crashing.
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
+local HttpService = game:GetService("HttpService")
+local filename = "TBSOBR_FULL_DUMP.txt"
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "TBSOBR_Nuke"
+gui.Name = "TBSOBR_Dump"
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 2147483647
 gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 200, 0, 120)
-frame.Position = UDim2.new(0, 20, 0, 20)
+frame.Size = UDim2.new(0.9, 0, 0.2, 0)
+frame.Position = UDim2.new(0.05, 0, 0.4, 0)
 frame.BackgroundColor3 = Color3.fromRGB(18, 16, 26)
 frame.Active = true
 frame.Draggable = true
 frame.Parent = gui
 Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 30)
-title.BackgroundTransparency = 1
-title.Text = "ollie · Nuke"
-title.TextColor3 = Color3.fromRGB(255, 100, 100)
-title.Font = Enum.Font.GothamBold
-title.Parent = frame
+local label = Instance.new("TextLabel")
+label.Size = UDim2.new(1, -20, 1, -20)
+label.Position = UDim2.new(0, 10, 0, 10)
+label.BackgroundTransparency = 1
+label.Text = "Dumping everything..."
+label.TextColor3 = Color3.fromRGB(140, 100, 255)
+label.Font = Enum.Font.Code
+label.TextSize = 12
+label.TextWrapped = true
+label.TextYAlignment = Enum.TextYAlignment.Top
+label.Parent = frame
 
-local status = Instance.new("TextLabel")
-status.Size = UDim2.new(1, -20, 0, 40)
-status.Position = UDim2.new(0, 10, 0, 40)
-status.BackgroundTransparency = 1
-status.Text = "Ready."
-status.TextColor3 = Color3.fromRGB(235, 230, 255)
-status.Font = Enum.Font.Gotham
-status.TextSize = 12
-status.TextWrapped = true
-status.Parent = frame
+task.wait(0.5)
 
-local btn = Instance.new("TextButton")
-btn.Size = UDim2.new(1, -20, 0, 30)
-btn.Position = UDim2.new(0, 10, 0, 80)
-btn.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
-btn.Text = "Nuke Zombie"
-btn.TextColor3 = Color3.fromRGB(20, 16, 30)
-btn.Font = Enum.Font.GothamBold
-btn.Parent = frame
-Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+local function getPath(obj)
+    local parts = {}
+    local cur = obj
+    while cur and cur ~= game do
+        table.insert(parts, 1, cur.Name)
+        cur = cur.Parent
+    end
+    return "game." .. table.concat(parts, ".")
+end
 
-btn.MouseButton1Click:Connect(function()
-    status.Text = "Nuking..."
-    local nuked = 0
+local out = {}
+table.insert(out, "-- TBSOBR GLOBAL CLIENT DUMP")
+table.insert(out, "-- Place ID: " .. tostring(game.PlaceId))
+table.insert(out, "-- Date: " .. os.date("!%Y-%m-%d %H:%M:%S") .. " UTC\n")
 
-    pcall(function()
-        sethiddenproperty(LocalPlayer, "SimulationRadius", 69696969)
-        sethiddenproperty(LocalPlayer, "MaxSimulationRadius", math.huge)
-    end)
+local count = 0
 
-    for _, boss in ipairs(workspace:GetChildren()) do
-        if boss:IsA("Model") then
-            local zombie = boss:FindFirstChild("Zombie")
-            if zombie then
-                -- Method 1: Destroy scripts inside Zombie
-                for _, child in ipairs(zombie:GetChildren()) do
-                    if child:IsA("Script") or child:IsA("NumberValue") or child:IsA("IntValue") then
-                        pcall(function() child:Destroy() end)
-                    end
-                end
-                
-                -- Method 2: Destroy the Zombie folder itself
-                pcall(function() zombie:Destroy() end)
-                
-                -- Method 3: Kill Humanoid and destroy Head/Torso
-                local hum = boss:FindFirstChildOfClass("Humanoid")
-                if hum then
-                    pcall(function()
-                        hum.MaxHealth = 0
-                        hum.Health = 0
-                    end)
-                end
-                local head = boss:FindFirstChild("Head")
-                if head then pcall(function() head:Destroy() end) end
-                local torso = boss:FindFirstChild("Torso") or boss:FindFirstChild("UpperTorso")
-                if torso then pcall(function() torso:Destroy() end) end
-                
-                -- Method 4: Break the whole model
-                pcall(function() boss:BreakJoints() end)
-                -- Method 5: Remove from workspace
-                -- boss.Parent = nil
-                
-                nuked = nuked + 1
+-- Scan EVERYTHING in the game
+for _, d in ipairs(game:GetDescendants()) do
+    local path = getPath(d)
+    
+    -- Skip Roblox CoreScripts
+    if not path:find("PlayerModule") and not path:find("HDAdmin") and not path:find("RbxCharacterSounds") then
+        
+        -- 1. Dump LocalScripts and ModuleScripts (these are readable)
+        if d:IsA("LocalScript") or d:IsA("ModuleScript") then
+            count = count + 1
+            label.Text = "Dumping: " .. d.Name .. " (" .. count .. ")"
+            
+            local src = nil
+            local ok, raw = pcall(function() return d.Source end)
+            if ok and raw and #raw > 0 then src = raw end
+            
+            if not src and decompile then
+                local ok2, dec = pcall(decompile, d)
+                if ok2 and dec then src = dec end
             end
+            
+            if src then
+                table.insert(out, string.format("-- ═══════════════════════════════════════\n-- [%s] %s\n-- ═══════════════════════════════════════\n%s\n", d.ClassName, path, src))
+            else
+                table.insert(out, string.format("-- [%s] %s (decompile failed)\n", d.ClassName, path))
+            end
+            
+        -- 2. Dump Server Scripts (just names, can't read source)
+        elseif d:IsA("Script") then
+            table.insert(out, string.format("-- [Script - Server Side] %s\n", path))
         end
     end
-    status.Text = "Nuked " .. nuked .. " bosses."
+end
+
+label.Text = "Writing to file..."
+task.wait(0.5)
+
+local finalStr = table.concat(out, "\n")
+
+local success, err = pcall(function()
+    writefile(filename, finalStr)
 end)
+
+if success then
+    label.Text = string.format("DONE!\nDumped %d scripts.\nSaved to Workspace/%s", count, filename)
+else
+    label.Text = "Write failed: " .. tostring(err)
+end
